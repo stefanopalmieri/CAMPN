@@ -61,13 +61,13 @@ class Genome(object):
     def __init__(self):
         self.network = nx.DiGraph()
         # node with 0 id is the output
-        self.network.add_node(0, type='constant',
-                              constant=np.matrix([[0.0, 1.0], [0.0, 0.0]], np.float16))
-        self.network.add_node(1, type='kronecker')
-        self.network.add_edge(1, 0, weight=1.0)
-        self.network.add_node(2, type='constant',
+        self.network.add_node(0, type='output',
                               constant=np.matrix([[0.0, 0.0], [0.0, 0.0]], np.float16))
-        self.network.add_edge(2, 1, weight=1.0, left=True)
+        #self.network.add_node(1, type='kronecker')
+        #self.network.add_edge(1, 0, weight=1.0, left=True)
+        self.network.add_node(1, type='constant',
+                              constant=np.matrix([[1.0, 0.0], [0.0, 1.0]], np.float16))
+        self.network.add_edge(1, 0, weight=1.0, left=True)
 
 
     # Mutations can add a Node, add a Link, change the weight of a Link,
@@ -76,22 +76,22 @@ class Genome(object):
         # If mutation occurs, mutate a new node
         rand = random.random()
         if rand <= self.P_NEW_NODE:
-            print "new node"
+            # print "new node"
             self.mutate_new_node()
         # If mutation occurs, mutate a new link
         rand = random.random()
         if rand <= self.P_NEW_LINK:
-            print "new link"
+            # print "new link"
             self.mutate_new_link()
         # If mutation occurs, mutate an existing node
         rand = random.random()
         if rand <= self.P_NODE:
-            print "node"
+            # print "node"
             self.mutate_node()
         # If mutation occurs, mutate an existing link
         rand = random.random()
         if rand <= self.P_LINK:
-            print "link"
+            # print "link"
             self.mutate_link()
 
     # Randomly mutates one of the existing nodes in the CAMPN.
@@ -137,10 +137,10 @@ class Genome(object):
         # func = self.types[random.randrange(0, len(self.types))]
 
         # Randomly select a node from the existing network
-        end = random.randrange(1, self.network.number_of_nodes())
+        end = random.randrange(0, self.network.number_of_nodes())
 
         if not self.network.node[end]['type'] == 'constant':
-            # if the end node is kronecker, add a constant as a predecessor
+            # if the end node is kronecker/output, add a constant as a predecessor
             matrix = np.random.rand(self.CONSTANT_ROW_SIZE, self.CONSTANT_COL_SIZE).astype(np.float16)
             self.network.add_node(self.network.number_of_nodes(),
                                   type='constant', constant=matrix)
@@ -151,6 +151,7 @@ class Genome(object):
         elif self.network.node[end]['type'] == 'constant':
             # if the node is a constant, place a kronecker in between
             matrix = self.network.node[end]['constant']
+
             if random.random() < 0.5:
                 self.network.node[end]['type'] = 'kronecker'
             else:
@@ -200,7 +201,7 @@ class Genome(object):
         else:
             # optimization for constant node so don't have to calculate sub
             # phenotype
-            if self.network.node[node]['type'] == 'constant' and node != 0:
+            if self.network.node[node]['type'] == 'constant':
                 return self.network.node[node]['constant']
 
             predecessors = list(self.network.predecessors(node))
@@ -232,7 +233,7 @@ class Genome(object):
 
                 left_matrix = np.add(left_matrix, left_output)
 
-            if len(predecessors) == 0:
+            if len(predecessors) == 0 and node > 0:
                 # weight = self.network[primary][node]['weight']
                 return self.node_output(node, left_matrix, left_matrix)
 
@@ -304,40 +305,39 @@ genome = Genome()
 for i in range(0, 1):
     genome.mutate()
 
+node_size = 1000
+node_color = 'white'
+node_text_size = 15
+edge_alpha = 0.3
+edge_thickness = 1
+edge_text_pos = 0.8
+text_font = 'sans-serif'
 
-    node_size=1000
-    node_color='white'
-    node_text_size=15
-    edge_alpha=0.3
-    edge_thickness=1
-    edge_text_pos=0.8
-    text_font='sans-serif'
+labels = {}
+for i in range(nx.number_of_nodes(genome.network)):
+    if genome.network.node[i]['type'] == 'constant':
+        word = "\n" + str(genome.network.node[i]['constant'])
+    else:
+        word = " "
+    labels[i] = str(genome.network.node[i]['type']) + word
 
-    labels = {}
-    for i in range(nx.number_of_nodes(genome.network)):
-        if genome.network.node[i]['type'] == 'constant':
-            word = "\n" + str(genome.network.node[i]['constant'])
-        else:
-            word = " "
-        labels[i] = str(genome.network.node[i]['type']) + word
+colorList = []
 
+for i in genome.network.edges():
+    a, b = i
+    colorVal = genome.network.edge[a][b]['weight']
+    colorList.append(colorVal)
 
-    colorList = []
+pos = nx.drawing.nx_agraph.graphviz_layout(genome.network, prog='dot')
 
-    for i in genome.network.edges():
-        a, b = i
-        colorVal = genome.network.edge[a][b]['weight']
-        colorList.append(colorVal)
+nx.draw_networkx_nodes(genome.network, pos, node_size=node_size, node_color=node_color)
+nx.draw_networkx_edges(genome.network, pos, width=colorList, edge_color=colorList, edge_cmap=plt.cm.RdYlGn, arrows=True)
+nx.draw_networkx_labels(genome.network, pos, labels=labels, font_size=node_text_size,
+                        font_family=text_font)
+nx.draw_networkx_edge_labels(genome.network, pos)
+plt.show()
 
-    pos = nx.drawing.nx_agraph.graphviz_layout(genome.network, prog='dot')
-
-    nx.draw_networkx_nodes(genome.network, pos, node_size=node_size, node_color=node_color)
-    nx.draw_networkx_edges(genome.network, pos, width=colorList, edge_color=colorList, edge_cmap=plt.cm.RdYlGn, arrows=True)
-    nx.draw_networkx_labels(genome.network, pos, labels=labels, font_size=node_text_size,
-                            font_family=text_font)
-    nx.draw_networkx_edge_labels(genome.network, pos)
-    plt.show()
-
-    print "getting phenotype"
-    print genome.get_phenotype()
+print "getting phenotype"
+print genome.get_phenotype()
+# print np.size(genome.get_phenotype(), 0)
 

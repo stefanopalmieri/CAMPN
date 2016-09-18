@@ -40,6 +40,22 @@ def z_layout(n):
         pos[i] = deinterleave2(i)
     return pos
 
+def twirl(n):
+    mask = 0x80000000
+
+    for i in range(0, 15):
+        n = n ^ ((n & (mask >> (2 * i + 1))) >> 1)
+        n = n ^ ((n & (mask >> (2 * i))) >> 2)
+
+    return n
+
+# Creates a Symmetrical Z-order curve
+def sym_z_layout(n):
+    pos = {}
+    for i in range(0, n):
+        pos[i] = deinterleave2(twirl(i))
+    return pos
+
 # Parameters for drawing graphs
 node_size=100
 node_color='blue'
@@ -78,7 +94,7 @@ def mutate_graph(i):
             plt.close(figures[j])
             next_graph(j)
 
-    plt.show()
+    # plt.show()
 
 
 def next_graph(i):
@@ -97,19 +113,22 @@ def next_graph(i):
     # remove links to nodes that have no input and no output links
     # (later, output nodes should be exempt from requiring output links
     # and input nodes should be exempt from requiring input links)
-    b = np.where(~phenotype.any(axis=1))[0]
+    # b = np.where(~phenotype.any(axis=1))[0]
 
-    for x in b:
-        phenotype[:, x] = 0
+    # for x in b:
+    #    phenotype[:, x] = 0
 
-    b = np.where(~phenotype.any(axis=0))[1]
+    # b = np.where(~phenotype.any(axis=0))[1]
 
-    for x in b:
-        phenotype[x, :] = 0
+    # for x in b:
+    #    phenotype[x, :] = 0
+
+    print "creating child %d" %i
+    print phenotype
 
     G[i] = nx.from_numpy_matrix(phenotype, create_using=nx.DiGraph())
 
-    pos[i] = z_layout(np.ma.size(phenotype, 0))
+    pos[i] = sym_z_layout(np.ma.size(phenotype, 0))
 
     colorList = []
     for j in G[i].edges():
