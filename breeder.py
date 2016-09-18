@@ -29,7 +29,7 @@ def unpart1by1(n):
 
 
 def deinterleave2(n):
-    return unpart1by1(n), unpart1by1(n >> 1)
+    return unpart1by1(n >> 1), unpart1by1(n)
 
 
 # Creates a two-dimensional
@@ -70,12 +70,15 @@ genomes = [None]*POP_SIZE
 
 
 def mutate_graph(i):
+
     for j in range(POP_SIZE):
         if j != i:
             genomes[j] = copy.deepcopy(genomes[i])
             genomes[j].mutate()
             plt.close(figures[j])
             next_graph(j)
+
+    plt.show()
 
 
 def next_graph(i):
@@ -88,7 +91,22 @@ def next_graph(i):
     plt.axis('off')
 
     phenotype = genomes[i].get_phenotype()
+
     phenotype[phenotype < WEIGHT_THRESHOLD] = 0
+
+    # remove links to nodes that have no input and no output links
+    # (later, output nodes should be exempt from requiring output links
+    # and input nodes should be exempt from requiring input links)
+    b = np.where(~phenotype.any(axis=1))[0]
+
+    for x in b:
+        phenotype[:, x] = 0
+
+    b = np.where(~phenotype.any(axis=0))[1]
+
+    for x in b:
+        phenotype[x, :] = 0
+
     G[i] = nx.from_numpy_matrix(phenotype, create_using=nx.DiGraph())
 
     pos[i] = z_layout(np.ma.size(phenotype, 0))
@@ -102,9 +120,10 @@ def next_graph(i):
     # nx.draw_networkx(G[i], pos=pos[i], ax=axes[i])
     nx.draw_networkx_nodes(G[i], pos[i], node_size=node_size,
                            alpha=node_alpha, node_color=node_color)
-    nx.draw_networkx_edges(G[i], pos[i], width=colorList, edge_color=colorList, edge_cmap=plt.cm.RdYlGn, arrows=True)
+    nx.draw_networkx_edges(G[i], pos[i], width=1, edge_color=colorList, edge_cmap=plt.cm.RdYlGn, arrows=True)
     nx.draw_networkx_labels(G[i], pos[i], font_size=node_text_size,
                             font_family=text_font)
+
 
     xlim[i] = axes[i].get_xlim()
     ylim[i] = axes[i].get_ylim()
