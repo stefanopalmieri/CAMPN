@@ -1,10 +1,12 @@
 import numpy as np
 import networkx as nx
 import random
+from enum import Enum
 import matplotlib.pyplot as plt
-import scipy.signal
-import pygraphviz
-import pydot
+import tkinter
+# import scipy.signal
+# import pygraphviz
+# import pydot
 
 #  This Source Code Form is subject to the terms of the Mozilla Public
 #  License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -17,7 +19,7 @@ import pydot
 
 # You may add additional accurate notices of copyright ownership.
 
-# Written by Stefano Palmieri in August-September 2016
+# Written by Stefano Palmieri in December 2016
 
 
 # This class stores the genome as a weighted directed graph representing
@@ -26,16 +28,31 @@ import pydot
 # matrix (tensor) or produce the matrix product, transpose, convolution, or
 # Kronecker product of the input matrices. Links are floating point values
 # that are use for scalar multiplication of matrices outputted from Nodes.
+
+# Enumerate node types
+# If you want to add more node types, add after Hadamard
+class NodeType(Enum):
+    output = 0
+    input = 1
+    # actual matrix operations get placed under this line
+    #############################################
+    kronecker = 2
+    hadamard = 3
+
+
 class Genome(object):
 
-    # Probability of mutating a new Node
-    P_NEW_NODE = 0.15
+    # Probability of mutating a new node
+    P_NEW_NODE = 0.1
 
-    # Probability of mutating a new Link
-    P_NEW_LINK = 0.15
+    # Probability of mutating a new input node
+    P_NEW_INPUT_NODE = 0.1
 
-    # Probability of mutating existing node
-    P_NODE = 0.3
+    # Probability of mutating a new link
+    P_NEW_LINK = 0.3
+
+    # Probability of mutating an existing input node
+    P_INPUT_NODE = 0.3
 
     # Probability of mutating existing link
     P_LINK = 0.3
@@ -43,74 +60,98 @@ class Genome(object):
     # Weights of a new added link
     N_LINK_WEIGHT = 1.0
 
-    # Dictionary for types of Nodes
-    types = {
-        0: 'constant',
-        1: 'kronecker',
-        2: 'elem_mult'
-        }
-
-    # Sizes for matrices in the constant node type
-    CONSTANT_ROW_SIZE = 2
-    CONSTANT_COL_SIZE = 2
+    # Sizes for matrices in the input node type
+    CONSTANT_ROW_SIZE = 4
+    CONSTANT_COL_SIZE = 4
 
     # Mean and standard deviation for weight mutations
     MUTATE_MEAN = 0.1
     MUTATE_STD = 0.1
 
     def __init__(self):
-        self.network = nx.DiGraph()
-        # node with 0 id is the output
-        self.network.add_node(0, type='output',
-                              constant=np.matrix([[0.0, 0.0], [0.0, 0.0]], np.float16))
-        #self.network.add_node(1, type='kronecker')
-        #self.network.add_edge(1, 0, weight=1.0, left=True)
-        self.network.add_node(1, type='constant',
-                              constant=np.matrix([[1.0, 0.0], [0.0, 1.0]], np.float16))
-        self.network.add_edge(1, 0, weight=1.0, left=True)
+        self.network = nx.MultiDiGraph()
 
+        # node with 0 id is the output
+        self.network.add_node(0, type=NodeType.output)
+        self.network.add_node(1, type=NodeType.input,
+                              constant=np.zeros((self.CONSTANT_ROW_SIZE, self.CONSTANT_COL_SIZE), dtype=np.float16))
+        self.network.add_edge(1, 0, key=True, weight=1.0)
 
     # Mutations can add a Node, add a Link, change the weight of a Link,
     # change the function of a Node.
     def mutate(self):
+
         # If mutation occurs, mutate a new node
-        rand = random.random()
-        if rand <= self.P_NEW_NODE:
-            # print "new node"
+        if random.random() <= self.P_NEW_NODE:
+            print("P_NEW_NODE")
             self.mutate_new_node()
-        # If mutation occurs, mutate a new link
-        rand = random.random()
-        if rand <= self.P_NEW_LINK:
-            # print "new link"
-            self.mutate_new_link()
-        # If mutation occurs, mutate an existing node
-        rand = random.random()
-        if rand <= self.P_NODE:
-            # print "node"
+
+        # If mutation occurs, mutate a new input node
+        if random.random() <= self.P_NEW_INPUT_NODE:
+            print("P_NEW_INPUT_NODE")
+            self.mutate_new_input_node()
+
+        # If mutation occurs, mutate an existing input node
+        if random.random() <= self.P_INPUT_NODE:
+            print("P_INPUT_NODE")
             self.mutate_node()
+
+        # If mutation occurs, mutate a new link
+        if random.random() <= self.P_NEW_LINK:
+            self.mutate_new_link()
+
         # If mutation occurs, mutate an existing link
-        rand = random.random()
-        if rand <= self.P_LINK:
-            # print "link"
+        if random.random() <= self.P_LINK:
+            print("P_LINK")
             self.mutate_link()
 
-    # Randomly mutates one of the existing nodes in the CAMPN.
+    # Create a new random Node by selecting a link and splitting it
+    def mutate_new_node(self):
+
+        # Randomly select a link from the existing network
+        start, end, key = random.choice(self.network.edges(keys=True))
+
+        # Randomly select the function for this node but don't include Input or Output types as functions
+        function = NodeType(random.randrange(NodeType.input.value + 1, len(NodeType)))
+
+        # Create a new node with the function type
+        node_num = self.network.number_of_nodes()
+        self.network.add_node(node_num, type=function)
+
+        # Add links for the new node
+        self.network.add_edge(start, node_num, key=random.random() < 0.5, weight=self.N_LINK_WEIGHT)
+        self.network.add_edge(node_num, end, key=key, weight=self.N_LINK_WEIGHT)
+
+        # Remove old edge (in future versions this edge should be disabled rather than removed)
+        self.network.remove_edge(start, end, key=key)
+
+    # Create a new random Node by selecting a non-input node and creating a child
+    def mutate_new_input_node(self):
+
+        # Get list of non-input nodes
+        non_input_nodes = [node for node, data in self.network.nodes(data=True) if data['type'] != NodeType.input]
+
+        # randomly pick a node from the list
+        node = random.choice(non_input_nodes)
+
+        # Create a new input node
+        node_num = self.network.number_of_nodes()
+        self.network.add_node(node_num, type=NodeType.input,
+                              constant=np.zeros((self.CONSTANT_ROW_SIZE, self.CONSTANT_COL_SIZE), dtype=np.float16))
+
+        # Create a link from the new input node to existing non-input node
+        self.network.add_edge(node_num, node, key=random.random() < 0.5, weight=self.N_LINK_WEIGHT)
+
+    # Randomly mutates one of the existing input nodes in the CAMPN.
     def mutate_node(self):
 
-        # keep picking a node until a constant node is found
-        while True:
-            # pick a random node that's not the output node
-            node = random.randrange(1, self.network.number_of_nodes())
-            if self.network.node[node]['type'] == 'constant':
-                break
+        # get list of input nodes
+        input_nodes = [node for node, data in self.network.nodes(data=True) if data['type'] == NodeType.input]
 
-        # pick a type of function to mutate to
-        # func = self.types[random.randrange(0, len(self.types))]
-
-        # self.network.node[node]['type'] = func
+        # randomly pick a node from the list
+        node = random.choice(input_nodes)
 
         # mutate one of it's constant's elements
-        constant = self.network.node[node]['constant']
         rand_row = random.randrange(0, self.CONSTANT_ROW_SIZE)
         rand_col = random.randrange(0, self.CONSTANT_COL_SIZE)
 
@@ -118,79 +159,40 @@ class Genome(object):
         change = np.random.normal(self.MUTATE_MEAN, self.MUTATE_STD)
 
         # apply the change
-        constant[rand_row, rand_col] += change
-        self.network.node[node]['constant'] = constant
-
-    # Randomly mutate an existing link by modifying the weight
-    def mutate_link(self):
-        # Add a Gaussian random variable to existing weight
-        weight_change = np.random.normal(self.MUTATE_MEAN, self.MUTATE_STD)
-
-        # Select a random edge
-        rand = random.randrange(0, len(self.network.edges()))
-        start, end = self.network.edges()[rand]
-        self.network[start][end]['weight'] += weight_change
-
-    # Create a new random Node and add it to the Genome.
-    def mutate_new_node(self):
-        # Randomly select the function for this node
-        # func = self.types[random.randrange(0, len(self.types))]
-
-        # Randomly select a node from the existing network
-        end = random.randrange(0, self.network.number_of_nodes())
-
-        if not self.network.node[end]['type'] == 'constant':
-            # if the end node is kronecker/output, add a constant as a predecessor
-            matrix = np.random.rand(self.CONSTANT_ROW_SIZE, self.CONSTANT_COL_SIZE).astype(np.float16)
-            self.network.add_node(self.network.number_of_nodes(),
-                                  type='constant', constant=matrix)
-            self.network.add_edge(self.network.number_of_nodes()-1,
-                                  end, weight=self.N_LINK_WEIGHT,
-                                  left=bool(random.getrandbits(1)))
-
-        elif self.network.node[end]['type'] == 'constant':
-            # if the node is a constant, place a kronecker in between
-            matrix = self.network.node[end]['constant']
-
-            if random.random() < 0.5:
-                self.network.node[end]['type'] = 'kronecker'
-            else:
-                self.network.node[end]['type'] = 'elem_mult'
-            self.network.node[end]['constant'] = None
-            self.network.add_node(self.network.number_of_nodes(),
-                                  type='constant', constant=matrix)
-            self.network.add_edge(self.network.number_of_nodes()-1,
-                                  end, weight=self.N_LINK_WEIGHT,
-                                  left=bool(random.getrandbits(1)))
+        self.network.node[node]['constant'][rand_row, rand_col] += change
 
     # Create a new Link and add it to the Genome.
     def mutate_new_link(self):
-        # select a random node to start a link from, don't include output node
-        start = random.randrange(1, self.network.number_of_nodes())
+        # select a random node to start a link from and, don't include output node
+        list = [node for node, data in self.network.nodes(data=True) if data['type'] != NodeType.output]
+        start = random.choice(list)
 
-        # Keep picking a terminal node until one that is not the
-        # start link and not a constant type is found
-        while True:
-            end = random.randrange(0, self.network.number_of_nodes())
-            if not self.network.node[end]['type'] == 'constant':
-                break
+        # select a random node to end link at, don't include input nodes
+        list = [node for node, data in self.network.nodes(data=True) if data['type'] != NodeType.input and node != start]
+        end = random.choice(list)
 
-        # First check this link doesn't already exist so we don't add it again.
-        # Otherwise we can consider this mutations as failed if it does exist
-        # (no mutation occurred).
-        if not (start, end) in self.network.edges():
-            # If the end node has no incoming links, make link primary.
-            self.network.add_edge(start, end, weight=self.N_LINK_WEIGHT,
-                                  left=bool(random.getrandbits(1)))
+        # Create the link
+        key = random.random() < 0.5
+        self.network.add_edge(start, end, key=key, weight=self.N_LINK_WEIGHT)
 
-            # attempt to add the link. Do this checking that
-            # the number of simple cycles does not become one or greater.
-            # Otherwise we have to remove the link to keep the CTPPN acyclic
-            # and can consider this a mutation that failed (no mutation occurred).
-            cycles = len(list(nx.simple_cycles(self.network)))
+        # Check for no cycles. If there are, remove this link
+        try:
+            nx.find_cycle(self.network, 1)
+            self.network.remove_edge(start, end, key=key)
+        except nx.exception.NetworkXNoCycle:
+            return
 
-            if cycles >= 1 or start == end:
-                self.network.remove_edge(start, end)
+    # Randomly mutate an existing link by modifying the weight
+    def mutate_link(self):
+
+        # Select a random link
+        start, end, key = random.choice(self.network.edges(keys=True))
+
+        # Add a Gaussian random variable to existing weight
+        weight_change = np.random.normal(self.MUTATE_MEAN, self.MUTATE_STD)
+
+        # Modify the weight on the link
+        self.network[start][end][key]['weight'] += weight_change
 
     # recursively compute output for a node
     def get_phenotype(self, node=None):
@@ -198,112 +200,94 @@ class Genome(object):
         if node is None:
             return self.get_phenotype(0)
 
-        else:
-            # optimization for constant node so don't have to calculate sub
-            # phenotype
-            if self.network.node[node]['type'] == 'constant':
-                return self.network.node[node]['constant']
+        if self.network.node[node]['type'] == NodeType.input:
+            return self.network.node[node]['constant']
 
-            predecessors = list(self.network.predecessors(node))
+        left_logit = self.calculate_logit(node, True)
+        right_logit = self.calculate_logit(node, False)
 
-            left_nodes = self.left_nodes(node, predecessors)
+        return self.node_output(node, left_logit, right_logit)
 
-            left_matrix = np.zeros((self.CONSTANT_ROW_SIZE, self.CONSTANT_COL_SIZE))
+    def calculate_logit(self, node, key):
+        predecessors = list(self.network.predecessors(node))
+        nodes = [predecessor for predecessor in predecessors if key in self.network[predecessor][node]]
+
+        if nodes:
             logit = np.zeros((self.CONSTANT_ROW_SIZE, self.CONSTANT_COL_SIZE))
+            for x in nodes:
+                weight = self.network[x][node][key]['weight']
+                term = self.get_phenotype(x)
+                logit, term = self.same_size(logit, term)
+                logit += weight * term
+            return logit
+        # if there are no links for this logit, return false
+        else:
+            return None
 
+    # compute output for the node
+    def node_output(self, node, left_logit, right_logit):
 
-            # remove the left nodes from the predecessor list
-            for left in left_nodes:
-                predecessors.remove(left)
+        # output node acts just like a sum
+        if self.network.node[node]['type'] == NodeType.output:
+            if left_logit is None:
+                return right_logit
+            elif right_logit is None:
+                return left_logit
+            else:
+                left_logit, right_logit = self.same_size(left_logit, right_logit)
+                return np.add(left_logit, right_logit)
 
-            # left will be weighted sum of left node outputs
-            for left in left_nodes:
-                weight = self.network[left][node]['weight']
-                left_output = weight * self.get_phenotype(left)
+        elif self.network.node[node]['type'] == NodeType.input:
+            return self.network.node[node]['constant']
 
-                # rescale smaller matrix if need be.
-                while np.ma.size(left_output, 0) != np.ma.size(left_matrix, 0):
-                    if np.ma.size(left_matrix, 0) < np.ma.size(left_output, 0):
-                        left_matrix = np.kron(left_matrix,
-                                        np.ones((self.CONSTANT_ROW_SIZE,
-                                                 self.CONSTANT_COL_SIZE)))
-                    elif np.ma.size(left_matrix, 0) > np.ma.size(left_output, 0):
-                        left_output = np.kron(left_output,
-                                              np.ones((self.CONSTANT_ROW_SIZE, self.CONSTANT_COL_SIZE)))
+        elif self.network.node[node]['type'] == NodeType.kronecker:
+            if left_logit is None:
+                result = np.kron(right_logit, right_logit)
+                return result
+            elif right_logit is None:
+                result = np.kron(left_logit, left_logit)
+                return result
+            else:
+                return np.kron(left_logit, right_logit)
 
-                left_matrix = np.add(left_matrix, left_output)
+        elif self.network.node[node]['type'] == NodeType.hadamard:
+            if left_logit is None:
+                return right_logit
+            elif right_logit is None:
+                return left_logit
+            else:
+                left_logit, right_logit = self.same_size(left_logit, right_logit)
+                return np.multiply(left_logit, right_logit)
 
-            if len(predecessors) == 0 and node > 0:
-                # weight = self.network[primary][node]['weight']
-                return self.node_output(node, left_matrix, left_matrix)
+    # returns left and right so that they are the same size, assuming both are square
+    # and share some common factor of their sides
+    def same_size(self, left, right):
+        left_row_size = np.ma.size(left, 0)
+        right_row_size = np.ma.size(right, 0)
+        if left_row_size != right_row_size:
+            if left_row_size < right_row_size:
+                length = int(right_row_size / left_row_size)
+                left = np.kron(left, np.ones((length, length)))
+            else:
+                length = int(left_row_size / right_row_size)
+                right = np.kron(right, np.ones((length, length)))
 
-            # logit will be weighted sum of predecessor outputs
-            for predecessor in predecessors:
-                weight = self.network[predecessor][node]['weight']
-                predecessor_output = weight * self.get_phenotype(predecessor)
-
-                # rescale smaller matrix if need be.
-                while np.ma.size(predecessor_output, 0) != np.ma.size(logit, 0):
-                    if np.ma.size(logit, 0) < np.ma.size(predecessor_output, 0):
-                        logit = np.kron(logit,
-                                        np.ones((self.CONSTANT_ROW_SIZE,
-                                                 self.CONSTANT_COL_SIZE)))
-                    elif np.ma.size(logit, 0) > np.ma.size(predecessor_output, 0):
-                        predecessor_output = np.kron(predecessor_output,
-                                                     np.ones((self.CONSTANT_ROW_SIZE, self.CONSTANT_COL_SIZE)))
-
-                logit = np.add(logit, predecessor_output)
-
-            if len(left_nodes) == 0 and node > 0:
-                # weight = self.network[primary][node]['weight']
-                return self.node_output(node, logit, logit)
-
-            return self.node_output(node, left_matrix, logit)
-
-    def node_output(self, node, left_matrix, logit):
-
-        if self.network.node[node]['type'] == 'kronecker':
-            return np.kron(left_matrix, logit)
-
-
-        # rescale smaller matrix if need be.
-        while np.ma.size(left_matrix, 0) != np.ma.size(logit, 0):
-            if np.ma.size(logit, 0) < np.ma.size(left_matrix, 0):
-                logit = np.kron(logit,
-                                np.ones((self.CONSTANT_ROW_SIZE,
-                                         self.CONSTANT_COL_SIZE)))
-            elif np.ma.size(logit, 0) > np.ma.size(left_matrix, 0):
-                left_matrix = np.kron(left_matrix,
-                                            np.ones((self.CONSTANT_ROW_SIZE,
-                                                     self.CONSTANT_COL_SIZE)))
-
-        if node == 0:
-            # output node acts just like a sum
-            return np.add(left_matrix, logit)
-        elif self.network.node[node]['type'] == 'elem_mult':
-            return np.multiply(left_matrix, logit)
-
-    def left_nodes(self, node, predecessors):
-
-        left_nodes = []
-
-        if self.network.node[node]['type'] == 'constant':
-            return left_nodes
-
-        for predecessor in predecessors:
-            if self.network[predecessor][node]['left']:
-                left_nodes.append(predecessor)
-
-        # if there is no primary return None
-        return left_nodes
-
+        return left, right
 
 # Testing Genotype stuff
 
 genome = Genome()
 
-for i in range(0, 1):
+for i in range(0, 40):
     genome.mutate()
+
+print("printing nodes")
+for node in genome.network.nodes(data=True):
+    print(node)
+
+print("printing edges")
+for edge in genome.network.edges(data=True, keys=True):
+    print(edge)
 
 node_size = 1000
 node_color = 'white'
@@ -313,31 +297,20 @@ edge_thickness = 1
 edge_text_pos = 0.8
 text_font = 'sans-serif'
 
-labels = {}
-for i in range(nx.number_of_nodes(genome.network)):
-    if genome.network.node[i]['type'] == 'constant':
-        word = "\n" + str(genome.network.node[i]['constant'])
-    else:
-        word = " "
-    labels[i] = str(genome.network.node[i]['type']) + word
+pos = nx.spring_layout(genome.network)
 
-colorList = []
-
-for i in genome.network.edges():
-    a, b = i
-    colorVal = genome.network.edge[a][b]['weight']
-    colorList.append(colorVal)
-
-pos = nx.drawing.nx_agraph.graphviz_layout(genome.network, prog='dot')
-
-nx.draw_networkx_nodes(genome.network, pos, node_size=node_size, node_color=node_color)
-nx.draw_networkx_edges(genome.network, pos, width=colorList, edge_color=colorList, edge_cmap=plt.cm.RdYlGn, arrows=True)
-nx.draw_networkx_labels(genome.network, pos, labels=labels, font_size=node_text_size,
-                        font_family=text_font)
-nx.draw_networkx_edge_labels(genome.network, pos)
+nx.draw_networkx(genome.network, pos, node_size=node_size, node_color=node_color)
+#nx.draw_networkx_nodes(genome.network, pos, node_size=node_size, node_color=node_color)
+#nx.draw_networkx_edges(genome.network, pos, width=colorList, edge_color=colorList, edge_cmap=plt.cm.RdYlGn, arrows=True)
+#nx.draw_networkx_labels(genome.network, pos, labels=labels, font_size=node_text_size,
+#                        font_family=text_font)
+#nx.draw_networkx_edge_labels(genome.network, pos)
 plt.show()
 
-print "getting phenotype"
-print genome.get_phenotype()
-# print np.size(genome.get_phenotype(), 0)
+print("getting phenotype")
+phenotype = genome.get_phenotype()
+print(phenotype)
+print(np.size(phenotype, 0))
 
+plt.matshow(phenotype, fignum=100, cmap=plt.cm.gray)
+plt.show()
