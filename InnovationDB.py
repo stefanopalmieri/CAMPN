@@ -65,21 +65,4 @@ class InnovationDB(object):
             for row in results:
                 return row[0]
  
-db = InnovationDB()
- 
-print(db.retrieve_innovation_num('output', 0, 0))
-print(db.retrieve_innovation_num('input', 0, 0))
-print(db.retrieve_innovation_num('left', 0, 0))
-print(db.retrieve_innovation_num('kron', 3, 0))
- 
-db.close()
- 
-'''
-cursor.execute("SELECT rowid, type, origin, destination from innovations WHERE rowid=2")
-for row in cursor.fetchall():
-   print("type = ", row[1])
-   print("origin = ", row[2])
-   print("destination = ", row[3])
-   print("innovation number = ", row[0])
- 
-'''
+
