@@ -66,7 +66,12 @@ class Genome(object):
 
     # Mean and standard deviation for weight mutations
     MUTATE_MEAN = 0.1
-    MUTATE_STD = 0.1
+    MUTATE_STD = 0.5
+
+    # Constants and Coefficients for computing compatibility
+    EXCESS_COEFFICIENT = 1.0
+    DISJOINT_COEFFICIENT = 1.0
+    WEIGHT_COEFFICIENT = 0.4
 
     def __init__(self, innovation_db=None):
         self.innovation_db = innovation_db
@@ -82,9 +87,9 @@ class Genome(object):
                                                   dtype=np.float16))
         self.network.add_edge(2, 1, key=True, weight=1.0, innovation=3)
 
-        self.innovation_db.direct_insert('output', 0, 0)
-        self.innovation_db.direct_insert('input', 0, 0)
-        self.innovation_db.direct_insert('left', 1, 2)
+        self.innovation_db.retrieve_innovation_num('output', 0, 0)
+        self.innovation_db.retrieve_innovation_num('input', 0, 0)
+        self.innovation_db.retrieve_innovation_num('left', 2, 1)
 
     # Mutations can add a Node, add a Link, change the weight of a Link,
     # change the function of a Node.
@@ -132,20 +137,22 @@ class Genome(object):
 
         # Add links for the new node
         in_key = random.random() < 0.5
-        in_type = 'left' if incoming_key else 'right'
-        in_innov_num = self.innovation_db.retreive_innovation_num(in_type,
+        in_type = 'left' if in_key else 'right'
+        in_innov_num = self.innovation_db.retrieve_innovation_num(in_type,
                                                                   start,
                                                                   node_num)
         self.network.add_edge(start, node_num, 
-                              key=in_key, weight=self.N_LINK_WEIGHT)
+                              key=in_key, weight=self.N_LINK_WEIGHT,
+                              innovation=in_innov_num)
 
         out_key = random.random() < 0.5
-        out_type = 'left' if outgoing_key else 'right'
+        out_type = 'left' if out_key else 'right'
         out_innov_num = self.innovation_db.retrieve_innovation_num(out_type,
                                                                    start,
                                                                    node_num)
         self.network.add_edge(node_num, end,
-                              key=key, weight=self.N_LINK_WEIGHT)
+                              key=key, weight=self.N_LINK_WEIGHT,
+                              innovation=out_innov_num)
 
         # Remove old edge (in future versions this edge should
         # be disabled rather than removed)
@@ -164,16 +171,24 @@ class Genome(object):
         node = random.choice(non_input_nodes)
 
         # Create a new input node
-        node_num = self.network.number_of_nodes() + 1
+        # node_num = self.network.number_of_nodes() + 1
+        node_num = self.innovation_db.retrieve_innovation_num('input', 
+                                                              node, 0)
         self.network.add_node(node_num, type=NodeType.input,
                               constant=np.zeros((self.CONSTANT_ROW_SIZE,
                                                  self.CONSTANT_COL_SIZE),
                                                 dtype=np.float16))
 
         # Create a link from the new input node to existing non-input node
+        key = random.random() < 0.5
+        link_type = 'left' if key else 'right'
+        innov_num = self.innovation_db.retrieve_innovation_num(link_type,
+                                                               node_num,
+                                                               node)
         self.network.add_edge(node_num, node, 
-                              key=random.random() < 0.5,
-                              weight=self.N_LINK_WEIGHT)
+                              key=key,
+                              weight=self.N_LINK_WEIGHT,
+                              innovation=innov_num)
 
     # Randomly mutates one of the existing input nodes in the CAMPN.
     def mutate_node(self):
@@ -213,7 +228,13 @@ class Genome(object):
 
         # Create the link
         key = random.random() < 0.5
-        self.network.add_edge(start, end, key=key, weight=self.N_LINK_WEIGHT)
+        link_type = 'left' if key else 'right'
+        innov_num = self.innovation_db.retrieve_innovation_num(link_type,
+                                                               start,
+                                                               end)
+        self.network.add_edge(start, end, key=key,
+                              weight=self.N_LINK_WEIGHT,
+                              innovation=innov_num)
 
         # Check for no cycles. If there are, remove this link
         try:
@@ -264,6 +285,50 @@ class Genome(object):
         # if there are no links for this logit, return false
         else:
             return None
+
+    # Compute the distance using innovation numbers on the link genes
+    def distance(self, other):
+        innovations = self.get_link_innovations()
+        other_innovations = other.get_link_innovations()
+      
+        innovations_set = set(innovations)
+        other_innovations_set = set(other_innovations)
+
+        last_disjoint = min(innovations[-1], other_innovations[-1])
+
+        sym_dif = innovations_set ^ other_innovations_set
+        disjoint = [elem for elem in sym_dif if elem <= last_disjoint]
+        excess = [elem for elem in sym_dif if elem > last_disjoint]
+        normalizer = max(len(innovations), len(other_innovations))
+
+        disjoint_term = self.DISJOINT_COEFFICIENT * len(disjoint) / normalizer
+        excess_term = self.EXCESS_COEFFICIENT * len(excess) / normalizer
+        #weight_term = self.WEIGHT_COEFFICIENT \
+        #              * self.average_weight_difference(other)
+
+        return disjoint_term + excess_term
+
+    def average_weight_difference(self, other):
+        
+        total_weight_difference = 0
+        denominator = 0
+
+        for s, e, data in self.network.edges_iter(data=True):
+            weight = data['weight']
+            innovation = data['innovation']
+            for d,r, data2 in other.network.edges_iter(data=True):
+                weight2 = data2['weight']
+                innovation2 = data2['innovation']
+                if innovation == innovation2:
+                    total_weight_difference += abs(weight2 - weight)
+                    denominator += 1
+                    break
+        return total_weight_difference / denominator
+
+    def get_link_innovations(self):
+        innovations = [innovation for s,e,innovation \
+                      in self.network.edges_iter(data='innovation')]
+        return innovations
 
     # compute output for the node
     def node_output(self, node, left_logit, right_logit):
@@ -321,9 +386,13 @@ class Genome(object):
 
 innovation_db = InnovationDB()
 genome = Genome(innovation_db)
+genome2 = Genome(innovation_db)
 
 for i in range(0, 20):
     genome.mutate()
+
+print("distance is: ")
+print(genome.distance(genome2))
 
 print("printing nodes")
 for node in genome.network.nodes(data=True):
@@ -348,7 +417,7 @@ nx.draw_networkx(genome.network, pos, node_size=node_size, node_color=node_color
 #nx.draw_networkx_edges(genome.network, pos, width=colorList, edge_color=colorList, edge_cmap=plt.cm.RdYlGn, arrows=True)
 #nx.draw_networkx_labels(genome.network, pos, labels=labels, font_size=node_text_size,
 #                        font_family=text_font)
-#nx.draw_networkx_edge_labels(genome.network, pos)
+nx.draw_networkx_edge_labels(genome.network, pos)
 plt.show()
 
 print("getting phenotype")
@@ -407,7 +476,7 @@ edge_thickness=1
 edge_text_pos=0.8
 text_font='sans-serif'
 
-phenotype[phenotype < 0.1] = 0
+# phenotype[phenotype < 0.1] = 0
 
 G = nx.from_numpy_matrix(phenotype, create_using=nx.DiGraph())
 
